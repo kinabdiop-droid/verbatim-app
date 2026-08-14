@@ -1,0 +1,2065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Verbatim</title>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Verbatim" />
+<meta name="theme-color" content="#F3F0E7" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="fallback" style="font-family: sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; color: #555;">
+    Loading Verbatim…
+  </div>
+</div>
+<script>
+  window.addEventListener('error', function (e) {
+    var el = document.getElementById('fallback');
+    if (el) {
+      el.innerHTML = '<strong>Something went wrong loading the app:</strong><br><br>' +
+        (e.message || 'Unknown error') +
+        (e.filename ? ('<br><span style="font-size:12px;color:#999">' + e.filename + ':' + e.lineno + '</span>') : '');
+    }
+  });
+  setTimeout(function () {
+    var fallback = document.getElementById('fallback');
+    if (fallback && fallback.parentElement && fallback.parentElement.children.length === 1) {
+      fallback.innerHTML = 'Still loading… if this stays blank, something failed silently. Try reloading.';
+    }
+  }, 6000);
+</script>
+<script>
+// Database-backed storage shim -- same get/set/delete/list interface the app already uses,
+// but now backed by a real account (Netlify Identity) and a real database (Netlify Database)
+// instead of just this one phone's local storage. Every word now follows the logged-in user
+// across any device they log into.
+async function getIdentityToken() {
+  var user = window.netlifyIdentity && window.netlifyIdentity.currentUser();
+  if (!user) throw new Error("Not logged in");
+  return await user.jwt();
+}
+
+window.storage = {
+  get: async function (key, shared) {
+    var token = await getIdentityToken();
+    var res = await fetch("/.netlify/functions/storage?key=" + encodeURIComponent(key) + "&shared=" + !!shared, {
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (res.status === 404) throw new Error("not found");
+    if (!res.ok) throw new Error("storage error");
+    return await res.json();
+  },
+  set: async function (key, value, shared) {
+    var token = await getIdentityToken();
+    var res = await fetch("/.netlify/functions/storage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ key: key, value: value, shared: !!shared }),
+    });
+    if (!res.ok) throw new Error("storage error");
+    return await res.json();
+  },
+  delete: async function (key, shared) {
+    var token = await getIdentityToken();
+    var res = await fetch("/.netlify/functions/storage?key=" + encodeURIComponent(key) + "&shared=" + !!shared, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (!res.ok) throw new Error("storage error");
+    return await res.json();
+  },
+  list: async function (prefix, shared) {
+    var token = await getIdentityToken();
+    var res = await fetch(
+      "/.netlify/functions/storage?list=true&prefix=" + encodeURIComponent(prefix || "") + "&shared=" + !!shared,
+      { headers: { Authorization: "Bearer " + token } }
+    );
+    if (!res.ok) throw new Error("storage error");
+    return await res.json();
+  },
+};
+</script>
+<script>
+const { useState, useEffect, useCallback } = React;
+
+"use strict";
+const PAPER = "#F3F0E7";
+const PAPER_DARK = "#EAE5D6";
+const INK = "#242E3B";
+const INK_SOFT = "#5B6472";
+const TEAL = "#4F8A82";
+const TEAL_DARK = "#3B6D66";
+const GOLD = "#C99A3E";
+const LINE = "#D9D3C3";
+const FONTS = `
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+`;
+const LANGUAGE_NAMES = {
+    en: "English",
+    fr: "French",
+    de: "German",
+    it: "Italian",
+    es: "Spanish",
+};
+const UI_TEXT = {
+    en: {
+        tagline: "your words, kept — word for word",
+        tabAdd: "Add a word",
+        tabWords: "My words",
+        placeholder: "Type a word to crack open...",
+        crack: "Crack it open",
+        cracking: "Cracking it open…",
+        newBook: "+ new book",
+        bookPlaceholder: "Title of the book you're reading (optional)",
+        addingTo: "Adding to",
+        savedNote: "added to your collection",
+        emptyCollection: "Your collection is empty — crack open your first word to begin.",
+        searchPlaceholder: "Search your words...",
+        noResults: (q) => `No words match "${q}"`,
+        dueBanner: (n) => `${n} ${n === 1 ? "word is" : "words are"} ready to review`,
+        startReview: "Start review",
+        practiceNow: "Practice now",
+        whyCaught: "why did this one catch you?",
+        notePlaceholder: "Why did this one catch you?",
+        whereFrom: "WHERE IT COMES FROM",
+        tryToday: "TRY IT TODAY",
+        loading: "Loading your words…",
+        reviewNoDue: "No words due for review yet. Come back in a couple of days.",
+        reviewComplete: "Review complete.",
+        backToWords: "Back to my words",
+        reveal: "Reveal the word",
+        forgot: "I forgot",
+        remembered: "I remembered",
+        quickRecall: "QUICK RECALL",
+    },
+    fr: {
+        tagline: "vos mots, gardés — mot pour mot",
+        tabAdd: "Ajouter un mot",
+        tabWords: "Mes mots",
+        placeholder: "Tapez un mot...",
+        crack: "Décortiquer",
+        cracking: "Décorticage…",
+        newBook: "+ nouveau livre",
+        bookPlaceholder: "Titre du livre en cours (facultatif)",
+        addingTo: "Ajout à",
+        savedNote: "ajouté à votre collection",
+        emptyCollection: "Votre collection est vide — décortiquez votre premier mot pour commencer.",
+        searchPlaceholder: "Rechercher vos mots...",
+        noResults: (q) => `Aucun mot ne correspond à "${q}"`,
+        dueBanner: (n) => `${n} mot${n === 1 ? "" : "s"} à réviser`,
+        startReview: "Commencer la révision",
+        practiceNow: "S'entraîner",
+        whyCaught: "pourquoi ce mot vous a-t-il marqué ?",
+        notePlaceholder: "Pourquoi ce mot vous a-t-il marqué ?",
+        whereFrom: "D'OÙ IL VIENT",
+        tryToday: "À UTILISER AUJOURD'HUI",
+        loading: "Chargement de vos mots…",
+        reviewNoDue: "Aucun mot à réviser pour l'instant. Revenez dans quelques jours.",
+        reviewComplete: "Révision terminée.",
+        backToWords: "Retour à mes mots",
+        reveal: "Révéler le mot",
+        forgot: "J'ai oublié",
+        remembered: "Je m'en souvenais",
+        quickRecall: "RAPPEL RAPIDE",
+    },
+    de: {
+        tagline: "deine Wörter, bewahrt — Wort für Wort",
+        tabAdd: "Wort hinzufügen",
+        tabWords: "Meine Wörter",
+        placeholder: "Gib ein Wort ein...",
+        crack: "Aufknacken",
+        cracking: "Wird geknackt…",
+        newBook: "+ neues Buch",
+        bookPlaceholder: "Titel des aktuellen Buchs (optional)",
+        addingTo: "Hinzufügen zu",
+        savedNote: "zur Sammlung hinzugefügt",
+        emptyCollection: "Deine Sammlung ist leer — knacke dein erstes Wort, um zu beginnen.",
+        searchPlaceholder: "Wörter durchsuchen...",
+        noResults: (q) => `Keine Wörter passen zu "${q}"`,
+        dueBanner: (n) => `${n} Wort${n === 1 ? "" : "e"} bereit zur Wiederholung`,
+        startReview: "Wiederholung starten",
+        practiceNow: "Jetzt üben",
+        whyCaught: "warum ist dir dieses Wort aufgefallen?",
+        notePlaceholder: "Warum ist dir dieses Wort aufgefallen?",
+        whereFrom: "WOHER ES KOMMT",
+        tryToday: "HEUTE AUSPROBIEREN",
+        loading: "Wörter werden geladen…",
+        reviewNoDue: "Noch keine Wörter fällig. Schau in ein paar Tagen wieder vorbei.",
+        reviewComplete: "Wiederholung abgeschlossen.",
+        backToWords: "Zurück zu meinen Wörtern",
+        reveal: "Wort aufdecken",
+        forgot: "Ich habe es vergessen",
+        remembered: "Ich habe mich erinnert",
+        quickRecall: "SCHNELLE ABFRAGE",
+    },
+    it: {
+        tagline: "le tue parole, custodite — parola per parola",
+        tabAdd: "Aggiungi una parola",
+        tabWords: "Le mie parole",
+        placeholder: "Scrivi una parola...",
+        crack: "Scoprila",
+        cracking: "Scoprendo…",
+        newBook: "+ nuovo libro",
+        bookPlaceholder: "Titolo del libro che stai leggendo (facoltativo)",
+        addingTo: "Aggiungendo a",
+        savedNote: "aggiunta alla tua collezione",
+        emptyCollection: "La tua collezione è vuota — scopri la tua prima parola per iniziare.",
+        searchPlaceholder: "Cerca le tue parole...",
+        noResults: (q) => `Nessuna parola corrisponde a "${q}"`,
+        dueBanner: (n) => `${n} parola${n === 1 ? "" : "e"} da ripassare`,
+        startReview: "Inizia il ripasso",
+        practiceNow: "Esercitati ora",
+        whyCaught: "perché ti ha colpito questa parola?",
+        notePlaceholder: "Perché ti ha colpito questa parola?",
+        whereFrom: "DA DOVE VIENE",
+        tryToday: "USALA OGGI",
+        loading: "Caricamento delle tue parole…",
+        reviewNoDue: "Nessuna parola da ripassare ancora. Torna tra un paio di giorni.",
+        reviewComplete: "Ripasso completato.",
+        backToWords: "Torna alle mie parole",
+        reveal: "Rivela la parola",
+        forgot: "L'ho dimenticata",
+        remembered: "Me la sono ricordata",
+        quickRecall: "RIPASSO VELOCE",
+    },
+    es: {
+        tagline: "tus palabras, guardadas — palabra por palabra",
+        tabAdd: "Añadir una palabra",
+        tabWords: "Mis palabras",
+        placeholder: "Escribe una palabra...",
+        crack: "Descifrarla",
+        cracking: "Descifrando…",
+        newBook: "+ nuevo libro",
+        bookPlaceholder: "Título del libro que estás leyendo (opcional)",
+        addingTo: "Añadiendo a",
+        savedNote: "añadida a tu colección",
+        emptyCollection: "Tu colección está vacía — descifra tu primera palabra para empezar.",
+        searchPlaceholder: "Busca tus palabras...",
+        noResults: (q) => `Ninguna palabra coincide con "${q}"`,
+        dueBanner: (n) => `${n} palabra${n === 1 ? "" : "s"} lista${n === 1 ? "" : "s"} para repasar`,
+        startReview: "Empezar repaso",
+        practiceNow: "Practicar ahora",
+        whyCaught: "¿por qué te llamó la atención esta palabra?",
+        notePlaceholder: "¿Por qué te llamó la atención esta palabra?",
+        whereFrom: "DE DÓNDE VIENE",
+        tryToday: "ÚSALA HOY",
+        loading: "Cargando tus palabras…",
+        reviewNoDue: "Aún no hay palabras para repasar. Vuelve en unos días.",
+        reviewComplete: "Repaso completado.",
+        backToWords: "Volver a mis palabras",
+        reveal: "Revelar la palabra",
+        forgot: "La olvidé",
+        remembered: "La recordé",
+        quickRecall: "REPASO RÁPIDO",
+    },
+};
+function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function daysSince(iso) {
+    if (!iso)
+        return 999;
+    const then = new Date(iso).getTime();
+    return (Date.now() - then) / (1000 * 60 * 60 * 24);
+}
+function formatDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+async function loadWords() {
+    try {
+        const res = await window.storage.get("verbatim:words", false);
+        return res ? JSON.parse(res.value) : [];
+    }
+    catch (_a) {
+        return [];
+    }
+}
+async function saveWords(words) {
+    try {
+        await window.storage.set("verbatim:words", JSON.stringify(words), false);
+    }
+    catch (e) {
+        console.error("Save failed", e);
+    }
+}
+async function generateEntry(text, language) {
+    const instructions = `You help a curious reader who loves words understand one they just encountered. This is NOT a plain dictionary — the tone should feel like a knowledgeable friend sharing something delightful, not a reference book.
+
+The reader just encountered this in their reading: "${text}"
+
+If that is a full sentence rather than a single word, pick the single most interesting or least common word in it and define that one instead of the whole sentence.
+
+Respond in English.
+
+Respond with ONLY a JSON object, nothing before or after it, no markdown code fences, in exactly this shape:
+{"word": "the headword, cleaned up", "partOfSpeech": "e.g. noun, verb, adjective, phrase", "definition": "one clear, plain-English sentence, no jargon", "example": "one fresh, vivid example sentence using the word naturally", "origin": "a short, genuinely interesting 1-2 sentence story about where this word comes from or how it evolved", "useIt": "a short, natural one-sentence suggestion for how they could drop this word into a real conversation today", "emoji": "a single emoji that best captures the meaning or feeling of this word", "synonyms": "2-4 close synonyms, comma-separated, or an empty string if truly none fit"}`;
+    let response;
+    try {
+        response = await fetch("/.netlify/functions/lookup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ instructions }),
+        });
+    }
+    catch (networkErr) {
+        throw new Error("Network issue reaching the lookup service");
+    }
+    if (!response.ok) {
+        let detail = response.status;
+        try {
+            const errBody = await response.json();
+            if (errBody === null || errBody === void 0 ? void 0 : errBody.error)
+                detail = errBody.error;
+        }
+        catch (_a) { }
+        throw new Error(`Lookup service error (${detail})`);
+    }
+    const data = await response.json();
+    if (!data || !Array.isArray(data.content)) {
+        console.error("Unexpected API payload", data);
+        throw new Error("Unexpected response shape from lookup service");
+    }
+    const raw = data.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("")
+        .trim();
+    const match = raw.match(/\{[\s\S]*\}/);
+    const jsonStr = match ? match[0] : raw;
+    let parsed;
+    try {
+        parsed = JSON.parse(jsonStr);
+    }
+    catch (parseErr) {
+        console.error("Could not parse model output as JSON:", raw);
+        throw new Error("Couldn't read the lookup result — try again");
+    }
+    if (!parsed.word || !parsed.definition) {
+        throw new Error("Lookup result was missing key fields");
+    }
+    return parsed;
+}
+const SPINE_COLORS = [TEAL, GOLD, "#8B5E6B", "#6B7A4A", "#4A6B7A", "#A6693B"];
+function spineColor(name) {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++)
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return SPINE_COLORS[Math.abs(hash) % SPINE_COLORS.length];
+}
+function Bookshelf({ books, currentBook, onSelect, newBookLabel, covers }) {
+    return (React.createElement("div", { style: { display: "flex", gap: 8, overflowX: "auto", padding: "4px 2px 14px", WebkitOverflowScrolling: "touch" } },
+        React.createElement("button", { onClick: () => onSelect(""), style: {
+                flexShrink: 0,
+                width: 42,
+                height: 110,
+                borderRadius: "3px 8px 8px 3px",
+                border: `1px dashed ${LINE}`,
+                background: "transparent",
+                color: INK_SOFT,
+                fontFamily: "'Public Sans', sans-serif",
+                fontSize: 11,
+                cursor: "pointer",
+                writingMode: "vertical-rl",
+                textOrientation: "mixed",
+                padding: "8px 0",
+            } }, newBookLabel),
+        books.map((name) => {
+            const active = currentBook === name;
+            const cover = covers && covers[name];
+            return (React.createElement("button", { key: name, onClick: () => onSelect(name), title: name, style: {
+                    flexShrink: 0,
+                    width: 42,
+                    height: 110,
+                    borderRadius: "3px 8px 8px 3px",
+                    border: active ? `2px solid ${INK}` : "none",
+                    background: cover ? "#fff" : spineColor(name),
+                    color: "#fff",
+                    fontFamily: "'Fraunces', serif",
+                    fontSize: 12.5,
+                    cursor: "pointer",
+                    writingMode: cover ? "initial" : "vertical-rl",
+                    textOrientation: "mixed",
+                    padding: cover ? 0 : "10px 0",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    boxShadow: "1px 2px 4px rgba(36,46,59,0.15)",
+                } }, cover ? (React.createElement("img", { src: cover, alt: name, referrerPolicy: "no-referrer", style: { width: "100%", height: "100%", objectFit: "cover", display: "block" }, onError: (e) => { e.target.style.display = "none"; } })) : (name)));
+        })));
+}
+function useBookSuggestions(query) {
+    const [suggestions, setSuggestions] = useState([]);
+    const [status, setStatus] = useState("idle"); // idle | searching | error | ok
+    useEffect(() => {
+        const q = query.trim();
+        if (q.length < 3) {
+            setSuggestions([]);
+            setStatus("idle");
+            return;
+        }
+        let cancelled = false;
+        setStatus("searching");
+        const handle = setTimeout(async () => {
+            try {
+                const res = await fetch(`/.netlify/functions/books?q=${encodeURIComponent(q)}`);
+                if (cancelled)
+                    return;
+                if (!res.ok) {
+                    console.error("Book search failed with status", res.status);
+                    setStatus(res.status === 429 ? "rate-limited" : "error");
+                    return;
+                }
+                const data = await res.json();
+                if (cancelled)
+                    return;
+                const seen = new Set();
+                const items = (data.items || [])
+                    .map((it) => {
+                    var _a, _b, _c, _d, _e, _f, _g;
+                    const authors = (_a = it.volumeInfo) === null || _a === void 0 ? void 0 : _a.authors;
+                    return {
+                        title: (_b = it.volumeInfo) === null || _b === void 0 ? void 0 : _b.title,
+                        author: authors && authors.length ? authors.join(", ") : null,
+                        cover: ((_g = (((_d = (_c = it.volumeInfo) === null || _c === void 0 ? void 0 : _c.imageLinks) === null || _d === void 0 ? void 0 : _d.thumbnail) || ((_f = (_e = it.volumeInfo) === null || _e === void 0 ? void 0 : _e.imageLinks) === null || _f === void 0 ? void 0 : _f.smallThumbnail) || null)) === null || _g === void 0 ? void 0 : _g.replace(/^http:/, "https:")) || null,
+                    };
+                })
+                    .filter((it) => {
+                    if (!it.title || seen.has(it.title))
+                        return false;
+                    seen.add(it.title);
+                    return true;
+                });
+                setSuggestions(items);
+                setStatus("ok");
+            }
+            catch (err) {
+                console.error("Book search error", err);
+                if (!cancelled) {
+                    setSuggestions([]);
+                    setStatus("error");
+                }
+            }
+        }, 550);
+        return () => {
+            cancelled = true;
+            clearTimeout(handle);
+        };
+    }, [query]);
+    return { suggestions, status };
+}
+function MicButton({ onResult, language, size = 40 }) {
+    const [listening, setListening] = useState(false);
+    const [errorMsg, setErrorMsg] = useState("");
+    useEffect(() => {
+        if (!errorMsg)
+            return;
+        const timer = setTimeout(() => setErrorMsg(""), 8000);
+        return () => clearTimeout(timer);
+    }, [errorMsg]);
+    const runRecognition = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            setErrorMsg("Voice input isn't supported in this browser.");
+            return;
+        }
+        try {
+            const recognition = new SpeechRecognition();
+            recognition.lang = { en: "en-US", fr: "fr-FR", de: "de-DE", it: "it-IT", es: "es-ES" }[language] || "en-US";
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+            recognition.onstart = () => setListening(true);
+            recognition.onend = () => setListening(false);
+            recognition.onerror = (e) => {
+                setListening(false);
+                if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+                    setErrorMsg("Blocked: tap the 🔒 icon in your address bar → Site settings → Microphone → Allow, then reload.");
+                }
+                else if (e.error === "no-speech") {
+                    setErrorMsg("Didn't catch that — try again.");
+                }
+                else {
+                    setErrorMsg(`Voice input hit a snag (${e.error || "unknown"}).`);
+                }
+            };
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                onResult(transcript);
+            };
+            recognition.start();
+        }
+        catch (err) {
+            setListening(false);
+            setErrorMsg("Couldn't start voice input on this device.");
+        }
+    };
+    const start = async () => {
+        setErrorMsg("");
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach((track) => track.stop());
+            }
+            catch (err) {
+                setErrorMsg(err.name === "NotAllowedError"
+                    ? "Blocked: tap the 🔒 icon in your address bar → Site settings → Microphone → Allow, then reload."
+                    : "Couldn't access the microphone here.");
+                return;
+            }
+        }
+        runRecognition();
+    };
+    return (React.createElement("div", { style: { position: "relative", display: "inline-block" } },
+        React.createElement("button", { type: "button", onClick: start, title: "Speak instead of typing", style: {
+                flexShrink: 0,
+                width: size,
+                height: size,
+                borderRadius: "50%",
+                border: "none",
+                background: listening ? "#B5533C" : PAPER_DARK,
+                color: listening ? "#fff" : INK_SOFT,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: size > 34 ? 16 : 13,
+            } }, listening ? "●" : "🎤"),
+        errorMsg && (React.createElement("div", { style: {
+                position: "absolute",
+                bottom: "calc(100% + 6px)",
+                right: 0,
+                background: INK,
+                color: PAPER,
+                fontSize: 11.5,
+                fontFamily: "'Public Sans', sans-serif",
+                padding: "6px 10px",
+                borderRadius: 6,
+                width: 190,
+                zIndex: 30,
+            } }, errorMsg))));
+}
+function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+function buildQuestion(entry, pool) {
+    const others = pool.filter((w) => w.id !== entry.id);
+    const canChoice = others.length >= 3;
+    const hasSynonym = entry.synonyms && entry.synonyms.split(",").map((s) => s.trim()).filter(Boolean).length > 0;
+    const types = canChoice
+        ? ["reveal", "wordFromDef", "defFromWord", "fillBlank", ...(hasSynonym ? ["synonymMatch"] : [])]
+        : ["reveal"];
+    const type = types[Math.floor(Math.random() * types.length)];
+    if (type === "reveal")
+        return { type, entry };
+    const distractors = shuffle(others).slice(0, 3);
+    if (type === "wordFromDef") {
+        const options = shuffle([entry, ...distractors]).map((e) => ({ id: e.id, label: e.word, correct: e.id === entry.id }));
+        return { type, entry, options };
+    }
+    if (type === "defFromWord") {
+        const options = shuffle([entry, ...distractors]).map((e) => ({ id: e.id, label: e.definition, correct: e.id === entry.id }));
+        return { type, entry, options };
+    }
+    if (type === "fillBlank") {
+        const options = shuffle([entry, ...distractors]).map((e) => ({ id: e.id, label: e.word, correct: e.id === entry.id }));
+        const re = new RegExp(entry.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+        const blanked = entry.example && re.test(entry.example) ? entry.example.replace(re, "_____") : entry.example;
+        return { type, entry, options, blanked };
+    }
+    if (type === "synonymMatch") {
+        const syns = entry.synonyms.split(",").map((s) => s.trim()).filter(Boolean);
+        const synonymShown = syns[Math.floor(Math.random() * syns.length)];
+        const options = shuffle([entry, ...distractors]).map((e) => ({ id: e.id, label: e.word, correct: e.id === entry.id }));
+        return { type, entry, options, synonymShown };
+    }
+}
+function QuizQuestion({ entry, pool, onAnswer, t }) {
+    const [question] = useState(() => buildQuestion(entry, pool));
+    const [revealed, setRevealed] = useState(false);
+    const [selected, setSelected] = useState(null);
+    const choose = (opt) => {
+        if (selected)
+            return;
+        setSelected(opt.id);
+        setTimeout(() => onAnswer(opt.correct), 900);
+    };
+    if (question.type === "reveal") {
+        return (React.createElement("div", { style: {
+                background: "#fff",
+                border: `1px solid ${LINE}`,
+                borderRadius: 10,
+                padding: "36px 28px",
+                minHeight: 200,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                gap: 14,
+            } },
+            React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 11, color: INK_SOFT, textTransform: "uppercase", letterSpacing: 1 } }, entry.partOfSpeech),
+            React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 16, color: INK, lineHeight: 1.5 } }, entry.definition),
+            !revealed ? (React.createElement("button", { onClick: () => setRevealed(true), style: { alignSelf: "center", marginTop: 10, background: PAPER_DARK, color: INK, border: "none", borderRadius: 8, padding: "9px 16px", fontFamily: "'Public Sans', sans-serif", fontWeight: 600, fontSize: 13.5, cursor: "pointer" } }, t.reveal)) : (React.createElement("div", { style: { marginTop: 6 } },
+                React.createElement("span", { style: { fontFamily: "'Fraunces', serif", fontSize: 26, color: TEAL_DARK, fontWeight: 500 } }, entry.word),
+                React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 18, justifyContent: "center" } },
+                    React.createElement("button", { onClick: () => onAnswer(false), style: { background: "#fff", border: `1px solid ${LINE}`, borderRadius: 8, padding: "9px 16px", fontFamily: "'Public Sans', sans-serif", fontWeight: 600, fontSize: 13.5, color: INK_SOFT, cursor: "pointer" } }, t.forgot),
+                    React.createElement("button", { onClick: () => onAnswer(true), style: { background: TEAL, border: "none", borderRadius: 8, padding: "9px 16px", fontFamily: "'Public Sans', sans-serif", fontWeight: 600, fontSize: 13.5, color: "#fff", cursor: "pointer" } }, t.remembered))))));
+    }
+    const prompt = question.type === "wordFromDef"
+        ? entry.definition
+        : question.type === "defFromWord"
+            ? `${entry.emoji || "📖"}  ${entry.word}`
+            : question.type === "synonymMatch"
+                ? question.synonymShown
+                : question.blanked;
+    const promptLabel = question.type === "wordFromDef"
+        ? "Which word is this?"
+        : question.type === "defFromWord"
+            ? "Which definition is right?"
+            : question.type === "synonymMatch"
+                ? "Which word means the same?"
+                : "Fill in the blank";
+    return (React.createElement("div", { style: {
+            background: "#fff",
+            border: `1px solid ${LINE}`,
+            borderRadius: 10,
+            padding: "30px 26px",
+            minHeight: 200,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+        } },
+        React.createElement("span", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: TEAL_DARK, letterSpacing: 0.5, textAlign: "center" } }, promptLabel.toUpperCase()),
+        React.createElement("p", { style: {
+                fontFamily: question.type === "defFromWord" ? "'Fraunces', serif" : "'Public Sans', sans-serif",
+                fontSize: question.type === "defFromWord" ? 24 : 16,
+                fontStyle: question.type === "fillBlank" ? "italic" : "normal",
+                color: INK,
+                lineHeight: 1.5,
+                textAlign: "center",
+                margin: "4px 0 8px",
+            } }, prompt),
+        React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, question.options.map((opt) => {
+            const isSelected = selected === opt.id;
+            const showCorrect = selected && opt.correct;
+            const showWrong = isSelected && !opt.correct;
+            return (React.createElement("button", { key: opt.id, onClick: () => choose(opt), disabled: !!selected, style: {
+                    textAlign: "left",
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${showCorrect ? TEAL : showWrong ? "#B5533C" : LINE}`,
+                    background: showCorrect ? "rgba(79,138,130,0.12)" : showWrong ? "rgba(181,83,60,0.1)" : "#fff",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13.5,
+                    color: INK,
+                    cursor: selected ? "default" : "pointer",
+                } }, opt.label));
+        }))));
+}
+function WordChip({ children, small }) {
+    return (React.createElement("span", { style: {
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: small ? 12 : 14,
+            color: TEAL_DARK,
+            background: "rgba(79,138,130,0.1)",
+            padding: small ? "2px 8px" : "4px 10px",
+            borderRadius: 4,
+            letterSpacing: 0.2,
+        } }, children));
+}
+function drawWordCard(entry) {
+    const canvas = document.createElement("canvas");
+    const W = 900, H = 1125;
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(30, 30, W - 60, H - 60);
+    ctx.fillStyle = TEAL;
+    ctx.fillRect(60, 60, 6, H - 120);
+    ctx.textBaseline = "alphabetic";
+    ctx.font = "90px sans-serif";
+    ctx.fillText(entry.emoji || "📖", 100, 190);
+    ctx.fillStyle = INK;
+    ctx.font = "italic 500 64px Georgia, serif";
+    wrapText(ctx, entry.word, 100, 300, W - 200, 70);
+    ctx.fillStyle = "#5B6472";
+    ctx.font = "italic 26px Georgia, serif";
+    ctx.fillText(entry.partOfSpeech || "", 100, 350);
+    ctx.fillStyle = INK;
+    ctx.font = "30px Georgia, serif";
+    const defY = wrapText(ctx, entry.definition || "", 100, 420, W - 200, 42);
+    if (entry.example) {
+        ctx.fillStyle = "#5B6472";
+        ctx.font = "italic 26px Georgia, serif";
+        wrapText(ctx, '"' + entry.example + '"', 100, defY + 50, W - 200, 38);
+    }
+    if (entry.book) {
+        ctx.fillStyle = "#5B6472";
+        ctx.font = "italic 24px Georgia, serif";
+        ctx.fillText("from the book " + entry.book, 100, H - 130);
+    }
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(100, H - 105);
+    ctx.lineTo(W - 100, H - 105);
+    ctx.stroke();
+    ctx.fillStyle = TEAL;
+    ctx.font = "italic 500 26px Georgia, serif";
+    ctx.fillText("Verbatim", 100, H - 65);
+    ctx.fillStyle = "#5B6472";
+    ctx.font = "18px sans-serif";
+    ctx.fillText("a word-keeping app", 100, H - 40);
+    return canvas;
+}
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+    const words = (text || "").split(" ");
+    let line = "";
+    let curY = y;
+    for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + " ";
+        if (ctx.measureText(testLine).width > maxWidth && line !== "") {
+            ctx.fillText(line, x, curY);
+            line = words[i] + " ";
+            curY += lineHeight;
+        }
+        else {
+            line = testLine;
+        }
+    }
+    ctx.fillText(line, x, curY);
+    return curY;
+}
+function ShareCardModal({ entry, onClose }) {
+    const canvasRef = useState(() => drawWordCard(entry))[0];
+    const [imgUrl, setImgUrl] = useState("");
+    useEffect(() => {
+        setImgUrl(canvasRef.toDataURL("image/png"));
+    }, []);
+    const download = () => {
+        canvasRef.toBlob((blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `verbatim-${entry.word.toLowerCase().replace(/[^a-z0-9]/g, "-")}.png`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }, "image/png");
+    };
+    const share = () => {
+        canvasRef.toBlob(async (blob) => {
+            const file = new File([blob], `verbatim-${entry.word}.png`, { type: "image/png" });
+            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({ files: [file], title: entry.word });
+                }
+                catch (_a) { }
+            }
+            else {
+                download();
+            }
+        }, "image/png");
+    };
+    return (React.createElement("div", { style: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(36,46,59,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 70,
+            padding: 20,
+        }, onClick: (e) => e.target === e.currentTarget && onClose() },
+        React.createElement("div", { style: { background: "#fff", borderRadius: 12, padding: 16, maxWidth: 340, width: "100%" } },
+            imgUrl && (React.createElement("img", { src: imgUrl, alt: entry.word, style: { width: "100%", borderRadius: 8, display: "block", marginBottom: 14 } })),
+            React.createElement("div", { style: { display: "flex", gap: 10 } },
+                React.createElement("button", { onClick: download, style: {
+                        flex: 1,
+                        background: PAPER_DARK,
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "10px 0",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        color: INK,
+                        cursor: "pointer",
+                    } }, "Download"),
+                React.createElement("button", { onClick: share, style: {
+                        flex: 1,
+                        background: TEAL,
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "10px 0",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        color: "#fff",
+                        cursor: "pointer",
+                    } }, "Share")),
+            React.createElement("button", { onClick: onClose, style: {
+                    width: "100%",
+                    marginTop: 10,
+                    background: "none",
+                    border: "none",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 12.5,
+                    color: INK_SOFT,
+                    cursor: "pointer",
+                    padding: 6,
+                } }, "Close"))));
+}
+function EntryCard({ entry, onRemove, onNoteChange, t, hideHeader }) {
+    const [editingNote, setEditingNote] = useState(false);
+    const [noteDraft, setNoteDraft] = useState(entry.note || "");
+    const [showShare, setShowShare] = useState(false);
+    const saveNote = () => {
+        setEditingNote(false);
+        onNoteChange(entry.id, noteDraft.trim());
+    };
+    return (React.createElement("div", { style: {
+            background: "#fff",
+            border: hideHeader ? "none" : `1px solid ${LINE}`,
+            borderLeft: hideHeader ? "none" : `3px solid ${TEAL}`,
+            borderRadius: hideHeader ? 0 : 6,
+            padding: hideHeader ? "0 4px 14px" : "18px 20px",
+            marginBottom: hideHeader ? 0 : 14,
+            position: "relative",
+        } },
+        !hideHeader && (React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+                React.createElement("span", { style: { fontSize: 28, lineHeight: 1, flexShrink: 0 } }, entry.emoji || "📖"),
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10 } },
+                    React.createElement("span", { style: { fontFamily: "'Fraunces', serif", fontSize: 22, color: INK, fontWeight: 500 } }, entry.word),
+                    React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT, fontStyle: "italic" } }, entry.partOfSpeech))),
+            React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 11, color: INK_SOFT } }, formatDate(entry.dateAdded)))),
+        React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 14.5, color: INK, margin: "6px 0", lineHeight: 1.5 } }, entry.definition),
+        React.createElement("p", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 14.5, color: INK_SOFT, margin: "8px 0 0" } },
+            "\"",
+            entry.example,
+            "\""),
+        entry.origin && (React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px dashed ${LINE}` } },
+            React.createElement("span", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: GOLD, letterSpacing: 0.5 } }, t.whereFrom),
+            React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, color: INK_SOFT, margin: "4px 0 0", lineHeight: 1.5 } }, entry.origin))),
+        entry.useIt && (React.createElement("div", { style: { marginTop: 10 } },
+            React.createElement("span", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: TEAL_DARK, letterSpacing: 0.5 } }, t.tryToday),
+            React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, color: INK, margin: "4px 0 0", lineHeight: 1.5, fontStyle: "italic" } }, entry.useIt))),
+        entry.synonyms && (React.createElement("div", { style: { marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+            React.createElement("span", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: INK_SOFT, letterSpacing: 0.5 } }, "SYNONYMS"),
+            entry.synonyms.split(",").map((s) => s.trim()).filter(Boolean).map((s, i) => (React.createElement(WordChip, { key: i, small: true }, s))))),
+        React.createElement("div", { style: { marginTop: 12 } }, editingNote ? (React.createElement("div", { style: { display: "flex", gap: 8 } },
+            React.createElement("input", { autoFocus: true, value: noteDraft, onChange: (e) => setNoteDraft(e.target.value), onKeyDown: (e) => e.key === "Enter" && saveNote(), onBlur: saveNote, placeholder: t.notePlaceholder, style: {
+                    flex: 1,
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13,
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 6,
+                    padding: "6px 10px",
+                    outline: "none",
+                } }))) : entry.note ? (React.createElement("p", { onClick: () => setEditingNote(true), style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: TEAL_DARK, cursor: "pointer", margin: 0 } },
+            "\u270E ",
+            entry.note)) : (React.createElement("button", { onClick: () => setEditingNote(true), style: { background: "none", border: "none", color: INK_SOFT, fontFamily: "'Public Sans', sans-serif", fontSize: 12.5, cursor: "pointer", padding: 0 } },
+            "+ ",
+            t.whyCaught))),
+        entry.book && (React.createElement("div", { style: { marginTop: 10 } },
+            React.createElement(WordChip, { small: true }, entry.book))),
+        React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 12 } },
+            React.createElement("button", { onClick: () => setShowShare(true), style: {
+                    background: "none",
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 14,
+                    padding: "4px 12px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 12,
+                    color: TEAL_DARK,
+                    cursor: "pointer",
+                } }, "\uD83D\uDDBC\uFE0F Share word")),
+        showShare && React.createElement(ShareCardModal, { entry: entry, onClose: () => setShowShare(false) }),
+        React.createElement("button", { onClick: () => onRemove(entry.id), style: {
+                position: "absolute",
+                top: 14,
+                right: 14,
+                opacity: 0,
+                transition: "opacity 0.15s",
+                background: "none",
+                border: "none",
+                color: INK_SOFT,
+                fontSize: 12,
+                cursor: "pointer",
+            }, className: "remove-btn", "aria-label": `Remove ${entry.word}` }, "remove")));
+}
+function AddView({ onAdded, onUpdateBook, onNoteChange, lastBook, lastBookCover, lastBookAuthor, onSetLastBook, knownBooks, bookCovers, language, t }) {
+    const [text, setText] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [result, setResult] = useState(null);
+    const [taggingBook, setTaggingBook] = useState(false);
+    const submit = async () => {
+        if (!text.trim() || loading)
+            return;
+        setLoading(true);
+        setError("");
+        setResult(null);
+        setTaggingBook(false);
+        try {
+            const entry = await generateEntry(text.trim(), language);
+            entry.id = uid();
+            entry.dateAdded = new Date().toISOString();
+            entry.lastReviewed = null;
+            entry.book = null;
+            entry.bookCover = null;
+            setResult(entry);
+            onAdded(entry);
+            setText("");
+        }
+        catch (e) {
+            setError(`Couldn't crack that one open (${e.message || "unknown error"}). Try again?`);
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    const assignBook = (name, cover, author) => {
+        onUpdateBook(result.id, name, cover, author);
+        setResult((r) => (Object.assign(Object.assign({}, r), { book: name, bookCover: cover })));
+        onSetLastBook(name, cover, author);
+        setTaggingBook(false);
+    };
+    return (React.createElement("div", { style: { maxWidth: 560, margin: "0 auto", paddingTop: result ? 0 : 40 } },
+        !result && (React.createElement("p", { style: { textAlign: "center", fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, color: INK_SOFT, marginBottom: 24 } }, "Type the word you just read that you want to crack open and keep.")),
+        React.createElement("div", { style: {
+                background: "#fff",
+                border: `1px solid ${LINE}`,
+                borderRadius: 12,
+                padding: 8,
+                display: "flex",
+                gap: 8,
+                alignItems: "flex-end",
+                boxShadow: "0 1px 3px rgba(36,46,59,0.06)",
+            } },
+            React.createElement("textarea", { value: text, onChange: (e) => setText(e.target.value), onKeyDown: (e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        submit();
+                    }
+                }, placeholder: t.placeholder, rows: 2, style: {
+                    flex: 1,
+                    border: "none",
+                    outline: "none",
+                    resize: "none",
+                    fontFamily: "'Fraunces', serif",
+                    fontSize: 18,
+                    color: INK,
+                    padding: "12px 10px",
+                    background: "transparent",
+                } }),
+            React.createElement("button", { onClick: submit, disabled: loading || !text.trim(), style: {
+                    alignSelf: "center",
+                    background: loading || !text.trim() ? PAPER_DARK : TEAL,
+                    color: loading || !text.trim() ? INK_SOFT : "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "11px 20px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    cursor: loading || !text.trim() ? "default" : "pointer",
+                    whiteSpace: "nowrap",
+                } }, loading ? t.cracking : t.crack)),
+        error && (React.createElement("p", { style: { color: "#B5533C", fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, marginTop: 14 } }, error)),
+        result && (React.createElement("div", { style: { marginTop: 28 } },
+            React.createElement(EntryCard, { entry: result, onRemove: () => { }, onNoteChange: onNoteChange, t: t }),
+            React.createElement("div", { style: { marginTop: 8 } }, result.book ? (React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK_SOFT, margin: 0 } },
+                "Added to: ",
+                React.createElement("strong", { style: { color: INK } }, result.book),
+                " ",
+                React.createElement("button", { onClick: () => setTaggingBook(true), style: { background: "none", border: "none", color: TEAL_DARK, fontFamily: "'Public Sans', sans-serif", fontSize: 12, cursor: "pointer", textDecoration: "underline", marginLeft: 4 } }, "change"))) : !taggingBook ? (React.createElement("div", { style: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" } },
+                React.createElement("button", { onClick: () => setTaggingBook(true), style: {
+                        background: "none",
+                        border: `1px solid ${LINE}`,
+                        borderRadius: 20,
+                        padding: "6px 14px",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontSize: 12.5,
+                        color: INK_SOFT,
+                        cursor: "pointer",
+                    } }, "\uD83D\uDCDA Add this to a book"),
+                lastBook && (React.createElement("button", { onClick: () => assignBook(lastBook, lastBookCover, lastBookAuthor), style: {
+                        background: "none",
+                        border: "none",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontSize: 12.5,
+                        color: TEAL_DARK,
+                        cursor: "pointer",
+                    } },
+                    "Same as last time \u2014 ",
+                    lastBook)))) : null),
+            taggingBook && (React.createElement(BookPicker, { knownBooks: knownBooks, bookCovers: bookCovers, onPick: (name, cover, author) => assignBook(name, cover, author), onCancel: () => setTaggingBook(false), t: t }))))));
+}
+function BookPicker({ knownBooks, bookCovers, onPick, onCancel, t }) {
+    const [showBookInput, setShowBookInput] = useState(false);
+    const [draftBook, setDraftBook] = useState("");
+    const { suggestions: bookSuggestions, status: bookSearchStatus } = useBookSuggestions(showBookInput ? draftBook : "");
+    return (React.createElement("div", { style: { marginTop: 14, borderTop: `1px dashed ${LINE}`, paddingTop: 14 } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
+            React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12.5, color: INK_SOFT, fontWeight: 600 } }, "Which book is this from?"),
+            React.createElement("button", { onClick: onCancel, style: { background: "none", border: "none", color: INK_SOFT, fontSize: 12, cursor: "pointer", fontFamily: "'Public Sans', sans-serif" } }, "cancel")),
+        React.createElement(Bookshelf, { books: knownBooks, currentBook: null, newBookLabel: t.newBook, covers: bookCovers, onSelect: (name) => {
+                if (name === "") {
+                    setShowBookInput(true);
+                    setDraftBook("");
+                }
+                else {
+                    onPick(name, bookCovers[name] || null, null);
+                }
+            } }),
+        showBookInput && (React.createElement("div", { style: { position: "relative", display: "flex", gap: 8, alignItems: "center" } },
+            React.createElement("input", { autoFocus: true, value: draftBook, onChange: (e) => setDraftBook(e.target.value), onKeyDown: (e) => e.key === "Enter" && draftBook.trim() && onPick(draftBook.trim(), null, null), placeholder: t.bookPlaceholder, style: {
+                    flex: 1,
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13,
+                    color: INK_SOFT,
+                    outline: "none",
+                    boxSizing: "border-box",
+                    background: "#fff",
+                } }),
+            (bookSearchStatus === "rate-limited" || bookSearchStatus === "error") && (React.createElement("p", { style: { position: "absolute", top: "calc(100% + 4px)", fontSize: 11.5, color: INK_SOFT, fontFamily: "'Public Sans', sans-serif", margin: 0 } }, bookSearchStatus === "rate-limited"
+                ? "Book lookup is briefly rate-limited — wait a few seconds, or press Enter to use this exact title."
+                : "Couldn't reach book search — press Enter to use this exact title.")),
+            bookSuggestions.length > 0 && (React.createElement("div", { style: {
+                    position: "absolute",
+                    top: "calc(100% + 4px)",
+                    left: 0,
+                    right: 0,
+                    background: "#fff",
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 8,
+                    boxShadow: "0 4px 14px rgba(36,46,59,0.12)",
+                    zIndex: 20,
+                    overflow: "hidden",
+                } }, bookSuggestions.map((s, i) => (React.createElement("button", { key: i, onClick: () => onPick(s.title, s.cover || null, s.author || null), style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    width: "100%",
+                    textAlign: "left",
+                    background: "none",
+                    border: "none",
+                    padding: "9px 12px",
+                    cursor: "pointer",
+                    borderBottom: i < bookSuggestions.length - 1 ? `1px solid ${LINE}` : "none",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13,
+                } },
+                s.cover ? (React.createElement("img", { src: s.cover, alt: "", referrerPolicy: "no-referrer", style: { width: 24, height: 34, objectFit: "cover", borderRadius: 2, flexShrink: 0 }, onError: (e) => { e.target.style.display = "none"; } })) : (React.createElement("span", { style: { width: 24, flexShrink: 0 } }, "\uD83D\uDCD6")),
+                React.createElement("span", null,
+                    React.createElement("span", { style: { color: INK } }, s.title),
+                    s.author && React.createElement("span", { style: { color: INK_SOFT } },
+                        " by ",
+                        s.author)))))))))));
+}
+function speakWord(word, language) {
+    if (!("speechSynthesis" in window))
+        return;
+    const utter = new SpeechSynthesisUtterance(word);
+    utter.lang = { en: "en-US", fr: "fr-FR", de: "de-DE", it: "it-IT", es: "es-ES" }[language] || "en-US";
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+}
+function WordRow({ number, entry, expanded, onToggle, onRemove, onNoteChange, onUpdateBook, knownBooks, bookCovers, language, t }) {
+    const [taggingBook, setTaggingBook] = useState(false);
+    return (React.createElement("div", { style: {
+            borderBottom: `1px solid ${LINE}`,
+        } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "12px 4px" } },
+            React.createElement("button", { onClick: onToggle, style: {
+                    flex: 1,
+                    background: "none",
+                    border: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: 0,
+                    cursor: "pointer",
+                    textAlign: "left",
+                } },
+                React.createElement("span", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: INK_SOFT, width: 22, flexShrink: 0 } },
+                    number,
+                    "."),
+                React.createElement("span", { style: { fontSize: 20, flexShrink: 0 } }, entry.emoji || "📖"),
+                React.createElement("span", { style: { fontFamily: "'Fraunces', serif", fontSize: 17, color: INK, flex: 1 } }, entry.word)),
+            React.createElement("button", { onClick: () => speakWord(entry.word, language), title: "Hear it pronounced", style: { background: "none", border: "none", color: INK_SOFT, fontSize: 15, cursor: "pointer", flexShrink: 0, padding: "4px 2px" } }, "\uD83D\uDD0A"),
+            React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 11, color: INK_SOFT, flexShrink: 0 } }, formatDate(entry.dateAdded)),
+            React.createElement("button", { onClick: onToggle, style: { background: "none", border: "none", fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT, flexShrink: 0, cursor: "pointer" } }, expanded ? "▾" : "▸")),
+        expanded && (React.createElement("div", { style: { paddingBottom: 10 } },
+            React.createElement(EntryCard, { entry: entry, onRemove: onRemove, onNoteChange: onNoteChange, t: t, hideHeader: true }),
+            !entry.book && (React.createElement("div", { style: { padding: "0 4px" } }, !taggingBook ? (React.createElement("button", { onClick: () => setTaggingBook(true), style: {
+                    background: "none",
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 20,
+                    padding: "6px 14px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 12.5,
+                    color: INK_SOFT,
+                    cursor: "pointer",
+                } }, "\uD83D\uDCDA Add this to a book")) : (React.createElement(BookPicker, { knownBooks: knownBooks, bookCovers: bookCovers, onPick: (name, cover) => {
+                    onUpdateBook(entry.id, name, cover);
+                    setTaggingBook(false);
+                }, onCancel: () => setTaggingBook(false), t: t }))))))));
+}
+function WordsView({ words, onRemove, onNoteChange, onUpdateBook, onRenameBook, onStartReview, onPracticeNow, onShowProgress, dueCount, bookCovers, knownBooks, closedBooks, onCloseBook, onReopenBook, language, t }) {
+    const [expandedIds, setExpandedIds] = useState({});
+    const [expandedBooks, setExpandedBooks] = useState({});
+    const [query, setQuery] = useState("");
+    const [viewMode, setViewMode] = useState("flat");
+    const [sortOrder, setSortOrder] = useState("oldest");
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const [completingBook, setCompletingBook] = useState(null);
+    const [renamingBook, setRenamingBook] = useState(null);
+    const [renameDraft, setRenameDraft] = useState("");
+    const toggleWord = (id) => setExpandedIds((prev) => (Object.assign(Object.assign({}, prev), { [id]: !prev[id] })));
+    if (words.length === 0) {
+        return (React.createElement("div", { style: { textAlign: "center", padding: "60px 20px" } },
+            React.createElement("p", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 18, color: INK_SOFT } }, t.emptyCollection)));
+    }
+    const allAscending = [...words].sort((a, b) => new Date(a.dateAdded) - new Date(b.dateAdded));
+    const numberOf = {};
+    allAscending.forEach((e, i) => (numberOf[e.id] = i + 1));
+    const q = query.trim().toLowerCase();
+    const filtered = q
+        ? allAscending.filter((w) => w.word.toLowerCase().includes(q) ||
+            (w.definition && w.definition.toLowerCase().includes(q)) ||
+            (w.book && w.book.toLowerCase().includes(q)) ||
+            formatDate(w.dateAdded).toLowerCase().includes(q) ||
+            new Date(w.dateAdded).toLocaleDateString().toLowerCase().includes(q))
+        : allAscending;
+    const displayList = sortOrder === "newest" ? [...filtered].reverse() : filtered;
+    const wordSuggestions = q
+        ? allAscending.filter((w) => w.word.toLowerCase().startsWith(q)).slice(0, 6)
+        : [];
+    const groups = {};
+    displayList.forEach((e) => {
+        const key = e.book || "Unsorted words";
+        if (!groups[key])
+            groups[key] = [];
+        groups[key].push(e);
+    });
+    const bookNames = Object.keys(groups).sort((a, b) => {
+        if (a === "Unsorted words")
+            return 1;
+        if (b === "Unsorted words")
+            return -1;
+        return 0;
+    });
+    const renderRow = (e) => (React.createElement(WordRow, { key: e.id, number: numberOf[e.id], entry: e, expanded: !!expandedIds[e.id], onToggle: () => toggleWord(e.id), onRemove: onRemove, onNoteChange: onNoteChange, onUpdateBook: onUpdateBook, knownBooks: knownBooks, bookCovers: bookCovers, language: language, t: t }));
+    return (React.createElement("div", { style: { maxWidth: 560, margin: "0 auto" } },
+        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14 } },
+            React.createElement("button", { onClick: onPracticeNow, style: {
+                    flex: 1,
+                    background: TEAL,
+                    border: "none",
+                    color: "#fff",
+                    borderRadius: 10,
+                    padding: "12px 16px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 14.5,
+                    cursor: "pointer",
+                } },
+                "\uD83C\uDFAF ",
+                t.practiceNow),
+            React.createElement("button", { onClick: onShowProgress, style: {
+                    background: "#fff",
+                    border: `1px solid ${LINE}`,
+                    color: INK_SOFT,
+                    borderRadius: 10,
+                    padding: "12px 16px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 14.5,
+                    cursor: "pointer",
+                } }, "\uD83D\uDCCA")),
+        dueCount > 0 && (React.createElement("div", { style: {
+                background: "#fff",
+                border: `1px solid ${GOLD}`,
+                borderRadius: 8,
+                padding: "14px 18px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 20,
+            } },
+            React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 14, color: INK } }, t.dueBanner(dueCount)),
+            React.createElement("button", { onClick: onStartReview, style: {
+                    background: GOLD,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "8px 14px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                } }, t.startReview))),
+        React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 14 } },
+            React.createElement("button", { onClick: () => setViewMode("flat"), style: {
+                    flex: 1,
+                    background: viewMode === "flat" ? INK : "transparent",
+                    color: viewMode === "flat" ? PAPER : INK_SOFT,
+                    border: `1px solid ${viewMode === "flat" ? INK : LINE}`,
+                    borderRadius: 8,
+                    padding: "8px 0",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                } }, "All words"),
+            React.createElement("button", { onClick: () => setViewMode("byBook"), style: {
+                    flex: 1,
+                    background: viewMode === "byBook" ? INK : "transparent",
+                    color: viewMode === "byBook" ? PAPER : INK_SOFT,
+                    border: `1px solid ${viewMode === "byBook" ? INK : LINE}`,
+                    borderRadius: 8,
+                    padding: "8px 0",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                } }, "By book"),
+            React.createElement("button", { onClick: () => setSortOrder((s) => (s === "oldest" ? "newest" : "oldest")), title: "Change sort order", style: {
+                    background: "#fff",
+                    border: `1px solid ${LINE}`,
+                    color: INK_SOFT,
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 12.5,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                } }, sortOrder === "oldest" ? "↓ Oldest first" : "↑ Newest first")),
+        React.createElement("div", { style: { position: "relative", display: "flex", gap: 8, marginBottom: 18, alignItems: "center" } },
+            React.createElement("input", { value: query, onChange: (e) => {
+                    setQuery(e.target.value);
+                    setShowSuggestions(true);
+                }, onFocus: () => setShowSuggestions(true), onBlur: () => setTimeout(() => setShowSuggestions(false), 150), placeholder: t.searchPlaceholder, style: {
+                    flex: 1,
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 8,
+                    padding: "9px 12px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13.5,
+                    color: INK,
+                    outline: "none",
+                    boxSizing: "border-box",
+                    background: "#fff",
+                } }),
+            showSuggestions && wordSuggestions.length > 0 && (React.createElement("div", { style: {
+                    position: "absolute",
+                    top: "calc(100% + 4px)",
+                    left: 0,
+                    right: 44,
+                    background: "#fff",
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 8,
+                    boxShadow: "0 4px 14px rgba(36,46,59,0.12)",
+                    zIndex: 20,
+                    overflow: "hidden",
+                } }, wordSuggestions.map((s, i) => (React.createElement("button", { key: s.id, onMouseDown: () => {
+                    setQuery(s.word);
+                    setShowSuggestions(false);
+                    setExpandedIds((prev) => (Object.assign(Object.assign({}, prev), { [s.id]: true })));
+                }, style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    textAlign: "left",
+                    background: "none",
+                    border: "none",
+                    padding: "8px 12px",
+                    cursor: "pointer",
+                    borderBottom: i < wordSuggestions.length - 1 ? `1px solid ${LINE}` : "none",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13,
+                } },
+                React.createElement("span", null, s.emoji || "📖"),
+                React.createElement("span", { style: { color: INK } }, s.word),
+                s.book && React.createElement("span", { style: { color: INK_SOFT, fontSize: 11.5 } },
+                    "\u2014 ",
+                    s.book))))))),
+        q && filtered.length === 0 && (React.createElement("p", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 15, color: INK_SOFT, textAlign: "center", padding: "20px 0" } }, t.noResults(query))),
+        viewMode === "flat" || (bookNames.length === 1 && bookNames[0] === "Unsorted words")
+            ? displayList.map(renderRow)
+            : bookNames.map((name) => {
+                const closedInfo = closedBooks && closedBooks[name];
+                const favoriteWord = (closedInfo === null || closedInfo === void 0 ? void 0 : closedInfo.favoriteWordId)
+                    ? groups[name].find((w) => w.id === closedInfo.favoriteWordId)
+                    : null;
+                const isOpen = !!expandedBooks[name];
+                return (React.createElement("div", { key: name, style: { marginBottom: 14, borderBottom: `1px solid ${LINE}`, paddingBottom: isOpen ? 10 : 0 } },
+                    React.createElement("div", { onClick: () => setExpandedBooks((prev) => (Object.assign(Object.assign({}, prev), { [name]: !prev[name] }))), style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", marginBottom: 2, flexWrap: "wrap", cursor: "pointer" } },
+                        React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT, flexShrink: 0 } }, isOpen ? "▾" : "▸"),
+                        bookCovers && bookCovers[name] ? (React.createElement("img", { src: bookCovers[name], alt: "", referrerPolicy: "no-referrer", style: { width: 28, height: 40, objectFit: "cover", borderRadius: 2, boxShadow: "1px 2px 4px rgba(36,46,59,0.15)", flexShrink: 0 } })) : (React.createElement("div", { style: {
+                                width: 28,
+                                height: 40,
+                                borderRadius: 2,
+                                background: name === "Unsorted words" ? LINE : spineColor(name),
+                                flexShrink: 0,
+                            } })),
+                        renamingBook === name ? (React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 }, onClick: (e) => e.stopPropagation() },
+                            React.createElement("input", { autoFocus: true, value: renameDraft, onChange: (e) => setRenameDraft(e.target.value), onKeyDown: (e) => {
+                                    if (e.key === "Enter") {
+                                        onRenameBook(name, renameDraft);
+                                        setRenamingBook(null);
+                                    }
+                                    if (e.key === "Escape")
+                                        setRenamingBook(null);
+                                }, style: {
+                                    fontFamily: "'Fraunces', serif",
+                                    fontStyle: "italic",
+                                    fontSize: 15,
+                                    padding: "3px 8px",
+                                    border: `1px solid ${TEAL}`,
+                                    borderRadius: 6,
+                                } }),
+                            React.createElement("button", { onClick: () => {
+                                    onRenameBook(name, renameDraft);
+                                    setRenamingBook(null);
+                                }, style: { background: TEAL, border: "none", borderRadius: 6, color: "#fff", fontSize: 11.5, padding: "4px 8px", cursor: "pointer" } }, "save"),
+                            React.createElement("button", { onClick: () => setRenamingBook(null), style: { background: "none", border: "none", color: INK_SOFT, fontSize: 11.5, cursor: "pointer" } }, "cancel"))) : (React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                            React.createElement("span", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 17, color: INK } }, name),
+                            name !== "Unsorted words" && (React.createElement("button", { onClick: (e) => {
+                                    e.stopPropagation();
+                                    setRenamingBook(name);
+                                    setRenameDraft(name);
+                                }, title: "Fix the title", style: { background: "none", border: "none", color: INK_SOFT, fontSize: 12, cursor: "pointer", padding: 0 } }, "\u270F\uFE0F")))),
+                        React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT } },
+                            groups[name].length,
+                            " ",
+                            groups[name].length === 1 ? "word" : "words"),
+                        name !== "Unsorted words" && (closedInfo ? (React.createElement("button", { onClick: (e) => { e.stopPropagation(); onReopenBook(name); }, style: {
+                                background: "rgba(79,138,130,0.12)",
+                                border: "none",
+                                borderRadius: 12,
+                                padding: "3px 10px",
+                                fontFamily: "'Public Sans', sans-serif",
+                                fontSize: 11.5,
+                                color: TEAL_DARK,
+                                cursor: "pointer",
+                            } }, "\u2713 finished \u2014 reopen")) : (React.createElement("button", { onClick: (e) => { e.stopPropagation(); setCompletingBook(name); }, style: {
+                                background: "none",
+                                border: `1px solid ${LINE}`,
+                                borderRadius: 12,
+                                padding: "3px 10px",
+                                fontFamily: "'Public Sans', sans-serif",
+                                fontSize: 11.5,
+                                color: INK_SOFT,
+                                cursor: "pointer",
+                            } }, "finish book")))),
+                    favoriteWord && (React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT, margin: "0 0 8px 40px", fontStyle: "italic" } },
+                        "Favorite word: ",
+                        favoriteWord.emoji,
+                        " ",
+                        favoriteWord.word)),
+                    isOpen && groups[name].map(renderRow)));
+            }),
+        completingBook && (React.createElement(BookCompletionModal, { bookName: completingBook, words: groups[completingBook] || [], onConfirm: (favoriteId) => {
+                onCloseBook(completingBook, favoriteId);
+                setCompletingBook(null);
+            }, onClose: () => setCompletingBook(null) }))));
+}
+function ReviewView({ queue, pool, onFinish, onMark, onSessionComplete, t }) {
+    const [index, setIndex] = useState(0);
+    const [correctCount, setCorrectCount] = useState(0);
+    const [reported, setReported] = useState(false);
+    if (queue.length === 0) {
+        return (React.createElement("div", { style: { textAlign: "center", padding: "60px 20px" } },
+            React.createElement("p", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 18, color: INK_SOFT } }, t.reviewNoDue),
+            React.createElement("button", { onClick: onFinish, style: {
+                    marginTop: 16,
+                    background: TEAL,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "10px 18px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                } }, t.backToWords)));
+    }
+    if (index >= queue.length) {
+        if (!reported) {
+            setReported(true);
+            onSessionComplete(correctCount, queue.length);
+        }
+        const pct = Math.round((correctCount / queue.length) * 100);
+        return (React.createElement("div", { style: { textAlign: "center", padding: "60px 20px" } },
+            React.createElement("p", { style: { fontFamily: "'Fraunces', serif", fontSize: 20, color: INK } }, t.reviewComplete),
+            React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 15, color: TEAL_DARK, fontWeight: 600, marginTop: 6 } },
+                correctCount,
+                " of ",
+                queue.length,
+                " correct (",
+                pct,
+                "%)"),
+            React.createElement("button", { onClick: onFinish, style: {
+                    marginTop: 16,
+                    background: TEAL,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "10px 18px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                } }, t.backToWords)));
+    }
+    const entry = queue[index];
+    const answer = (remembered) => {
+        onMark(entry.id, remembered);
+        if (remembered)
+            setCorrectCount((c) => c + 1);
+        setIndex((i) => i + 1);
+    };
+    return (React.createElement("div", { style: { maxWidth: 480, margin: "0 auto", textAlign: "center" } },
+        React.createElement("div", { style: { marginBottom: 10, fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT } },
+            index + 1,
+            " of ",
+            queue.length),
+        React.createElement(QuizQuestion, { key: entry.id, entry: entry, pool: pool, onAnswer: answer, t: t })));
+}
+function QuickQuiz({ entry, pool, onAnswer, onClose, t }) {
+    return (React.createElement("div", { style: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(36,46,59,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: 20,
+        }, onClick: (e) => e.target === e.currentTarget && onClose() },
+        React.createElement("div", { style: {
+                background: PAPER,
+                borderRadius: 12,
+                padding: "20px 18px",
+                maxWidth: 360,
+                width: "100%",
+                boxShadow: "0 8px 30px rgba(36,46,59,0.25)",
+            } },
+            React.createElement("div", { style: { textAlign: "center", marginBottom: 4 } },
+                React.createElement("span", { style: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: TEAL_DARK, letterSpacing: 0.5 } }, t.quickRecall)),
+            React.createElement(QuizQuestion, { entry: entry, pool: pool, onAnswer: (remembered) => onAnswer(entry.id, remembered), t: t }))));
+}
+function BookCompletionModal({ bookName, words, onConfirm, onClose }) {
+    const [favoriteId, setFavoriteId] = useState(null);
+    return (React.createElement("div", { style: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(36,46,59,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 60,
+            padding: 20,
+        }, onClick: (e) => e.target === e.currentTarget && onClose() },
+        React.createElement("div", { style: {
+                background: PAPER,
+                borderRadius: 12,
+                padding: "26px 24px",
+                maxWidth: 400,
+                width: "100%",
+                maxHeight: "80vh",
+                overflowY: "auto",
+                boxShadow: "0 8px 30px rgba(36,46,59,0.25)",
+            } },
+            React.createElement("h3", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 22, color: INK, margin: "0 0 4px" } },
+                "Finishing ",
+                bookName),
+            React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK_SOFT, margin: "0 0 18px" } },
+                "You collected ",
+                words.length,
+                " ",
+                words.length === 1 ? "word" : "words",
+                " from this one. Pick a favorite, if you like."),
+            React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 } }, words.map((w) => (React.createElement("button", { key: w.id, onClick: () => setFavoriteId(favoriteId === w.id ? null : w.id), style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    textAlign: "left",
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${favoriteId === w.id ? GOLD : LINE}`,
+                    background: favoriteId === w.id ? "rgba(201,154,62,0.12)" : "#fff",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 13.5,
+                    color: INK,
+                    cursor: "pointer",
+                } },
+                React.createElement("span", null, w.emoji || "📖"),
+                React.createElement("span", { style: { fontFamily: "'Fraunces', serif" } }, w.word))))),
+            React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+                React.createElement("button", { onClick: onClose, style: {
+                        background: "none",
+                        border: `1px solid ${LINE}`,
+                        borderRadius: 8,
+                        padding: "9px 16px",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        color: INK_SOFT,
+                        cursor: "pointer",
+                    } }, "Cancel"),
+                React.createElement("button", { onClick: () => onConfirm(favoriteId), style: {
+                        background: TEAL,
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "9px 16px",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        color: "#fff",
+                        cursor: "pointer",
+                    } }, "Finish this book")))));
+}
+function SettingsPanel({ settings, onSave, onClose, t }) {
+    const [days, setDays] = useState(settings.intervalDays);
+    const [hour, setHour] = useState(settings.preferredHour);
+    const [randomReminders, setRandomReminders] = useState(!!settings.randomReminders);
+    const [permissionNote, setPermissionNote] = useState("");
+    const save = () => {
+        if (randomReminders && "Notification" in window && Notification.permission === "default") {
+            Notification.requestPermission().then((perm) => {
+                if (perm !== "granted")
+                    setPermissionNote("Notifications were blocked — you can allow them later in your browser's site settings.");
+            });
+        }
+        onSave({ intervalDays: Number(days), preferredHour: Number(hour), randomReminders });
+        onClose();
+    };
+    const hourLabel = (h) => {
+        const period = h < 12 ? "AM" : "PM";
+        const display = h % 12 === 0 ? 12 : h % 12;
+        return `${display}:00 ${period}`;
+    };
+    return (React.createElement("div", { style: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(36,46,59,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 60,
+            padding: 20,
+        }, onClick: (e) => e.target === e.currentTarget && onClose() },
+        React.createElement("div", { style: {
+                background: PAPER,
+                borderRadius: 12,
+                padding: "26px 24px",
+                maxWidth: 360,
+                width: "100%",
+                maxHeight: "85vh",
+                overflowY: "auto",
+                boxShadow: "0 8px 30px rgba(36,46,59,0.25)",
+            } },
+            React.createElement("h3", { style: { fontFamily: "'Fraunces', serif", fontSize: 20, color: INK, margin: "0 0 18px" } }, "Quiz reminders"),
+            React.createElement("label", { style: { display: "block", fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK_SOFT, marginBottom: 6 } }, "Remind me every"),
+            React.createElement("select", { value: days, onChange: (e) => setDays(e.target.value), style: {
+                    width: "100%",
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 14,
+                    marginBottom: 16,
+                    background: "#fff",
+                } }, [1, 2, 3, 4, 5, 7, 10, 14].map((d) => (React.createElement("option", { key: d, value: d },
+                d,
+                " ",
+                d === 1 ? "day" : "days")))),
+            React.createElement("label", { style: { display: "block", fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK_SOFT, marginBottom: 6 } }, "Around what time"),
+            React.createElement("select", { value: hour, onChange: (e) => setHour(e.target.value), style: {
+                    width: "100%",
+                    border: `1px solid ${LINE}`,
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontSize: 14,
+                    marginBottom: 10,
+                    background: "#fff",
+                } }, Array.from({ length: 24 }, (_, h) => (React.createElement("option", { key: h, value: h }, hourLabel(h))))),
+            React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12, color: INK_SOFT, lineHeight: 1.5, margin: "0 0 20px" } }, "Since this lives in your browser rather than as a phone notification, the reminder will pop up the next time you open Verbatim after that time \u2014 not while your phone is locked."),
+            React.createElement("div", { style: { borderTop: `1px dashed ${LINE}`, paddingTop: 16, marginBottom: 20 } },
+                React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 10, cursor: "pointer" } },
+                    React.createElement("input", { type: "checkbox", checked: randomReminders, onChange: (e) => setRandomReminders(e.target.checked), style: { width: 18, height: 18 } }),
+                    React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK } }, "Surprise me with a word, now and then")),
+                React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: INK_SOFT, margin: "6px 0 0" } }, "Pops up a notification with a word you've already cracked open \u2014 tap it to reveal the definition again. Only works while Verbatim is open in a browser tab, not when your phone is fully locked."),
+                permissionNote && (React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "#B5533C", margin: "6px 0 0" } }, permissionNote))),
+            React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end", position: "sticky", bottom: -26, background: PAPER, padding: "10px 0 0", marginTop: 4 } },
+                React.createElement("button", { onClick: onClose, style: {
+                        background: "none",
+                        border: `1px solid ${LINE}`,
+                        borderRadius: 8,
+                        padding: "9px 16px",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        color: INK_SOFT,
+                        cursor: "pointer",
+                    } }, "Cancel"),
+                React.createElement("button", { onClick: save, style: {
+                        background: TEAL,
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "9px 16px",
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontWeight: 600,
+                        fontSize: 13.5,
+                        color: "#fff",
+                        cursor: "pointer",
+                    } }, "Save")))));
+}
+function ProgressModal({ history, onClose }) {
+    const sorted = [...history].reverse();
+    return (React.createElement("div", { style: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(36,46,59,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 70,
+            padding: 20,
+        }, onClick: (e) => e.target === e.currentTarget && onClose() },
+        React.createElement("div", { style: { background: PAPER, borderRadius: 12, padding: "24px 22px", maxWidth: 380, width: "100%", maxHeight: "75vh", overflowY: "auto" } },
+            React.createElement("h3", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 20, color: INK, margin: "0 0 6px" } }, "Your progress"),
+            sorted.length === 0 ? (React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, color: INK_SOFT } }, "No quiz sessions yet \u2014 try \"Practice now\" to start building a record.")) : (React.createElement("div", { style: { marginTop: 12 } }, sorted.map((s, i) => {
+                const pct = Math.round((s.correct / s.total) * 100);
+                return (React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${LINE}` } },
+                    React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK_SOFT } }, new Date(s.date).toLocaleDateString()),
+                    React.createElement("span", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, fontWeight: 600, color: pct >= 70 ? TEAL_DARK : "#B5533C" } },
+                        s.correct,
+                        "/",
+                        s.total,
+                        " \u2014 ",
+                        pct,
+                        "%")));
+            }))),
+            React.createElement("button", { onClick: onClose, style: {
+                    display: "block",
+                    margin: "18px auto 0",
+                    background: TEAL,
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "9px 18px",
+                    fontFamily: "'Public Sans', sans-serif",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    color: "#fff",
+                    cursor: "pointer",
+                } }, "Close"))));
+}
+function SpotlightModal({ entry, onClose, t }) {
+    const [revealed, setRevealed] = useState(false);
+    return (React.createElement("div", { style: {
+            position: "fixed",
+            inset: 0,
+            background: "rgba(36,46,59,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 80,
+            padding: 20,
+        }, onClick: (e) => e.target === e.currentTarget && onClose() },
+        React.createElement("div", { style: { background: PAPER, borderRadius: 12, padding: "28px 24px", maxWidth: 360, width: "100%", textAlign: "center" } },
+            React.createElement("span", { style: { fontSize: 40 } }, entry.emoji || "📖"),
+            React.createElement("p", { style: { fontFamily: "'Fraunces', serif", fontSize: 26, color: INK, margin: "10px 0 4px" } }, entry.word),
+            !revealed ? (React.createElement("button", { onClick: () => setRevealed(true), style: { marginTop: 14, background: TEAL, border: "none", borderRadius: 8, padding: "10px 18px", fontFamily: "'Public Sans', sans-serif", fontWeight: 600, fontSize: 13.5, color: "#fff", cursor: "pointer" } }, t.reveal.replace("word", "definition"))) : (React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 15, color: INK, marginTop: 10, lineHeight: 1.5 } }, entry.definition)),
+            React.createElement("button", { onClick: onClose, style: { display: "block", margin: "18px auto 0", background: "none", border: "none", color: INK_SOFT, fontSize: 12.5, fontFamily: "'Public Sans', sans-serif", cursor: "pointer" } }, "Close"))));
+}
+function App() {
+    const [words, setWords] = useState([]);
+    const [loaded, setLoaded] = useState(false);
+    const [tab, setTab] = useState("add");
+    const [lastBook, setLastBookState] = useState("");
+    const [lastBookCover, setLastBookCover] = useState(null);
+    const [lastBookAuthor, setLastBookAuthor] = useState(null);
+    const [streak, setStreak] = useState({ count: 0, lastActive: null });
+    const [closedBooks, setClosedBooks] = useState({});
+    const [quickQuizEntry, setQuickQuizEntry] = useState(null);
+    const [spotlightWord, setSpotlightWord] = useState(null);
+    const [quizHistory, setQuizHistory] = useState([]);
+    const [showProgress, setShowProgress] = useState(false);
+    const [language, setLanguage] = useState("en");
+    const [practiceMode, setPracticeMode] = useState(false);
+    const [settings, setSettings] = useState({ intervalDays: 3, preferredHour: 9, randomReminders: false });
+    const [showSettings, setShowSettings] = useState(false);
+    useEffect(() => {
+        loadWords().then(async (w) => {
+            setWords(w);
+            setLoaded(true);
+            let savedSettings = { intervalDays: 3, preferredHour: 9, randomReminders: false };
+            try {
+                const res = await window.storage.get("verbatim:settings", false);
+                if (res && res.value)
+                    savedSettings = JSON.parse(res.value);
+            }
+            catch (_a) { }
+            setSettings(savedSettings);
+            try {
+                const res = await window.storage.get("verbatim:streak", false);
+                if (res && res.value)
+                    setStreak(JSON.parse(res.value));
+            }
+            catch (_b) { }
+            try {
+                const res = await window.storage.get("verbatim:closedBooks", false);
+                if (res && res.value)
+                    setClosedBooks(JSON.parse(res.value));
+            }
+            catch (_c) { }
+            try {
+                const res = await window.storage.get("verbatim:quizHistory", false);
+                if (res && res.value)
+                    setQuizHistory(JSON.parse(res.value));
+            }
+            catch (_d) { }
+            const due = w.filter((word) => daysSince(word.lastReviewed || word.dateAdded) >= savedSettings.intervalDays);
+            if (due.length === 0)
+                return;
+            const currentHour = new Date().getHours();
+            if (currentHour < savedSettings.preferredHour)
+                return;
+            let lastShown = null;
+            try {
+                const res = await window.storage.get("verbatim:lastQuickQuiz", false);
+                lastShown = res ? res.value : null;
+            }
+            catch (_e) { }
+            const today = new Date().toDateString();
+            if (lastShown !== today) {
+                setQuickQuizEntry(due[Math.floor(Math.random() * due.length)]);
+                try {
+                    await window.storage.set("verbatim:lastQuickQuiz", today, false);
+                }
+                catch (_f) { }
+            }
+        });
+        (async () => {
+            try {
+                const res = await window.storage.get("verbatim:language", false);
+                if (res && res.value)
+                    setLanguage(res.value);
+            }
+            catch (_a) { }
+        })();
+    }, []);
+    const saveSettings = (next) => {
+        setSettings(next);
+        try {
+            window.storage.set("verbatim:settings", JSON.stringify(next), false);
+        }
+        catch (_a) { }
+    };
+    useEffect(() => {
+        if (!settings.randomReminders || words.length === 0)
+            return;
+        if (!("Notification" in window) || Notification.permission !== "granted")
+            return;
+        let timer = null;
+        const scheduleNext = () => {
+            const delay = (20 + Math.random() * 100) * 60 * 1000; // 20–120 min
+            timer = setTimeout(() => {
+                const pick = words[Math.floor(Math.random() * words.length)];
+                try {
+                    const notif = new Notification(`Remember "${pick.word}"?`, {
+                        body: "Tap to see the definition again.",
+                        icon: undefined,
+                    });
+                    notif.onclick = () => {
+                        window.focus();
+                        setSpotlightWord(pick);
+                        notif.close();
+                    };
+                }
+                catch (_a) { }
+                scheduleNext();
+            }, delay);
+        };
+        scheduleNext();
+        return () => clearTimeout(timer);
+    }, [settings.randomReminders, words.length]);
+    const changeLanguage = (lang) => {
+        setLanguage(lang);
+        try {
+            window.storage.set("verbatim:language", lang, false);
+        }
+        catch (_a) { }
+    };
+    const persist = useCallback((next) => {
+        setWords(next);
+        saveWords(next);
+    }, []);
+    const bumpStreak = async () => {
+        let s = streak;
+        try {
+            const res = await window.storage.get("verbatim:streak", false);
+            if (res && res.value)
+                s = JSON.parse(res.value);
+        }
+        catch (_a) { }
+        const today = new Date().toDateString();
+        if (s.lastActive === today)
+            return;
+        const yesterday = new Date(Date.now() - 86400000).toDateString();
+        const next = { count: s.lastActive === yesterday ? (s.count || 0) + 1 : 1, lastActive: today };
+        setStreak(next);
+        try {
+            await window.storage.set("verbatim:streak", JSON.stringify(next), false);
+        }
+        catch (_b) { }
+    };
+    const handleAdded = (entry) => {
+        persist([...words, entry]);
+        bumpStreak();
+    };
+    const handleRemove = (id) => {
+        persist(words.filter((w) => w.id !== id));
+    };
+    const handleNoteChange = (id, note) => {
+        const next = words.map((w) => (w.id === id ? Object.assign(Object.assign({}, w), { note }) : w));
+        persist(next);
+    };
+    const handleUpdateBook = (id, bookName, bookCover) => {
+        const next = words.map((w) => (w.id === id ? Object.assign(Object.assign({}, w), { book: bookName, bookCover: bookCover }) : w));
+        persist(next);
+    };
+    const handleRenameBook = (oldName, newName) => {
+        if (!newName.trim() || newName.trim() === oldName)
+            return;
+        const trimmed = newName.trim();
+        const next = words.map((w) => (w.book === oldName ? Object.assign(Object.assign({}, w), { book: trimmed }) : w));
+        persist(next);
+        if (closedBooks[oldName]) {
+            const nextClosed = Object.assign({}, closedBooks);
+            nextClosed[trimmed] = nextClosed[oldName];
+            delete nextClosed[oldName];
+            setClosedBooks(nextClosed);
+            try {
+                window.storage.set("verbatim:closedBooks", JSON.stringify(nextClosed), false);
+            }
+            catch (_a) { }
+        }
+    };
+    const handleSetLastBook = (name, cover, author) => {
+        setLastBookState(name);
+        setLastBookCover(cover);
+        setLastBookAuthor(author);
+    };
+    const handleSessionComplete = (correct, total) => {
+        if (total === 0)
+            return;
+        const entry = { date: new Date().toISOString(), correct, total };
+        const next = [...quizHistory, entry].slice(-30);
+        setQuizHistory(next);
+        try {
+            window.storage.set("verbatim:quizHistory", JSON.stringify(next), false);
+        }
+        catch (_a) { }
+    };
+    const handleMark = (id, remembered) => {
+        const next = words.map((w) => w.id === id
+            ? Object.assign(Object.assign({}, w), { lastReviewed: new Date().toISOString(), reviewCount: (w.reviewCount || 0) + (remembered ? 1 : 0) }) : w);
+        persist(next);
+        bumpStreak();
+    };
+    const closeBook = (bookName, favoriteWordId) => {
+        const next = Object.assign(Object.assign({}, closedBooks), { [bookName]: { closedDate: new Date().toISOString(), favoriteWordId: favoriteWordId || null } });
+        setClosedBooks(next);
+        try {
+            window.storage.set("verbatim:closedBooks", JSON.stringify(next), false);
+        }
+        catch (_a) { }
+    };
+    const reopenBook = (bookName) => {
+        const next = Object.assign({}, closedBooks);
+        delete next[bookName];
+        setClosedBooks(next);
+        try {
+            window.storage.set("verbatim:closedBooks", JSON.stringify(next), false);
+        }
+        catch (_a) { }
+    };
+    const dueWords = words.filter((w) => daysSince(w.lastReviewed || w.dateAdded) >= settings.intervalDays);
+    const knownBooks = [...new Set(words.map((w) => w.book).filter(Boolean))];
+    const bookCovers = {};
+    words.forEach((w) => {
+        if (w.book && w.bookCover && !bookCovers[w.book])
+            bookCovers[w.book] = w.bookCover;
+    });
+    const t = UI_TEXT[language] || UI_TEXT.en;
+    const shuffledPractice = () => {
+        const pool = [...words];
+        for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        return pool.slice(0, Math.min(10, pool.length));
+    };
+    const [practiceQueue, setPracticeQueue] = useState([]);
+    const startPractice = () => {
+        setPracticeQueue(shuffledPractice());
+        setPracticeMode(true);
+        setTab("review");
+    };
+    const startDueReview = () => {
+        setPracticeMode(false);
+        setTab("review");
+    };
+    const reviewQueue = practiceMode ? practiceQueue : dueWords;
+    const tabs = [
+        { id: "add", label: t.tabAdd },
+        { id: "words", label: `${t.tabWords}${words.length ? ` (${words.length})` : ""}` },
+    ];
+    return (React.createElement("div", { style: { minHeight: "100vh", background: PAPER, fontFamily: "'Public Sans', sans-serif" } },
+        React.createElement("style", null, FONTS),
+        React.createElement("div", { style: { maxWidth: 680, margin: "0 auto", padding: "36px 20px 60px" } },
+            React.createElement("header", { style: { textAlign: "center", marginBottom: 26, position: "relative" } },
+                typeof window !== "undefined" && window.netlifyIdentity && (React.createElement("button", { onClick: () => window.netlifyIdentity.logout(), style: {
+                        position: "absolute",
+                        top: 4,
+                        left: 0,
+                        background: "none",
+                        border: "none",
+                        color: INK_SOFT,
+                        fontFamily: "'Public Sans', sans-serif",
+                        fontSize: 11.5,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                    } }, "Log out")),
+                React.createElement("button", { onClick: () => setShowSettings(true), title: "Quiz reminder settings", style: {
+                        position: "absolute",
+                        top: 0,
+                        right: 0,
+                        width: 26,
+                        height: 26,
+                        background: "#fff",
+                        border: `1px solid ${LINE}`,
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 0,
+                    } },
+                    React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: INK_SOFT, strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" },
+                        React.createElement("circle", { cx: "12", cy: "12", r: "3" }),
+                        React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }))),
+                React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10 } },
+                    React.createElement("svg", { width: "30", height: "30", viewBox: "0 0 30 30", style: { flexShrink: 0 } },
+                        React.createElement("path", { d: "M4 5 C4 4 5 3 8 3 C11 3 13 4 14 5.5 L14 25 C13 23.5 11 22.5 8 22.5 C5 22.5 4 23.5 4 24.5 Z", fill: TEAL, opacity: "0.9" }),
+                        React.createElement("path", { d: "M26 5 C26 4 25 3 22 3 C19 3 17 4 16 5.5 L16 25 C17 23.5 19 22.5 22 22.5 C25 22.5 26 23.5 26 24.5 Z", fill: GOLD, opacity: "0.9" }),
+                        React.createElement("line", { x1: "15", y1: "5.5", x2: "15", y2: "25", stroke: INK, strokeWidth: "0.6", opacity: "0.4" })),
+                    React.createElement("h1", { style: { fontFamily: "'Fraunces', serif", fontStyle: "italic", fontWeight: 500, fontSize: 34, color: INK, margin: 0 } }, "Verbatim")),
+                React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: INK_SOFT, marginTop: 4, letterSpacing: 0.3 } }, t.tagline),
+                streak.count >= 2 && (React.createElement("p", { style: { fontFamily: "'Public Sans', sans-serif", fontSize: 12.5, color: GOLD, marginTop: 6, fontWeight: 600 } },
+                    "\uD83D\uDD25 ",
+                    streak.count,
+                    "-day streak"))),
+            React.createElement("nav", { style: { display: "flex", justifyContent: "center", gap: 4, marginBottom: 30 } }, tabs.map((tabItem) => (React.createElement("button", { key: tabItem.id, onClick: () => setTab(tabItem.id), style: {
+                    background: tab === tabItem.id ? INK : "transparent",
+                    color: tab === tabItem.id ? PAPER : INK_SOFT,
+                    border: `1px solid ${tab === tabItem.id ? INK : LINE}`,
+                    borderRadius: 20,
+                    padding: "7px 16px",
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                } }, tabItem.label)))),
+            !loaded ? (React.createElement("p", { style: { textAlign: "center", color: INK_SOFT } }, t.loading)) : tab === "add" ? (React.createElement(AddView, { onAdded: handleAdded, onUpdateBook: handleUpdateBook, onNoteChange: handleNoteChange, lastBook: lastBook, lastBookCover: lastBookCover, lastBookAuthor: lastBookAuthor, onSetLastBook: handleSetLastBook, knownBooks: knownBooks, bookCovers: bookCovers, language: language, t: t })) : tab === "words" ? (React.createElement(WordsView, { words: words, onRemove: handleRemove, onNoteChange: handleNoteChange, onUpdateBook: handleUpdateBook, onRenameBook: handleRenameBook, onStartReview: startDueReview, onPracticeNow: startPractice, onShowProgress: () => setShowProgress(true), dueCount: dueWords.length, bookCovers: bookCovers, knownBooks: knownBooks, closedBooks: closedBooks, onCloseBook: closeBook, onReopenBook: reopenBook, language: language, t: t })) : (React.createElement(ReviewView, { queue: reviewQueue, pool: words, onFinish: () => setTab("words"), onMark: handleMark, onSessionComplete: handleSessionComplete, t: t }))),
+        showSettings && (React.createElement(SettingsPanel, { settings: settings, onSave: saveSettings, onClose: () => setShowSettings(false), t: t })),
+        quickQuizEntry && (React.createElement(QuickQuiz, { entry: quickQuizEntry, pool: words, onAnswer: (id, remembered) => {
+                handleMark(id, remembered);
+                setQuickQuizEntry(null);
+            }, onClose: () => setQuickQuizEntry(null), t: t })),
+        spotlightWord && React.createElement(SpotlightModal, { entry: spotlightWord, onClose: () => setSpotlightWord(null), t: t }),
+        showProgress && React.createElement(ProgressModal, { history: quizHistory, onClose: () => setShowProgress(false) })));
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+
+function renderLogin() {
+  root.render(
+    React.createElement(
+      "div",
+      { style: { fontFamily: "'Public Sans', sans-serif", textAlign: "center", marginTop: "120px", padding: "0 20px" } },
+      React.createElement(
+        "h1",
+        { style: { fontFamily: "Georgia, serif", fontStyle: "italic", fontWeight: 500, fontSize: 36, color: "#242E3B", margin: 0 } },
+        "Verbatim"
+      ),
+      React.createElement(
+        "p",
+        { style: { color: "#5B6472", fontSize: 14, margin: "10px 0 26px" } },
+        "Log in or create an account to start keeping your words."
+      ),
+      React.createElement(
+        "button",
+        {
+          onClick: function () { window.netlifyIdentity.open("login"); },
+          style: { background: "#4F8A82", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer", marginRight: 10 },
+        },
+        "Log in"
+      ),
+      React.createElement(
+        "button",
+        {
+          onClick: function () { window.netlifyIdentity.open("signup"); },
+          style: { background: "#fff", color: "#4F8A82", border: "1px solid #4F8A82", borderRadius: 8, padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer" },
+        },
+        "Sign up"
+      )
+    )
+  );
+}
+
+function renderApp() {
+  root.render(React.createElement(App));
+}
+
+window.netlifyIdentity.on("init", function (user) {
+  user ? renderApp() : renderLogin();
+});
+window.netlifyIdentity.on("login", function () {
+  window.netlifyIdentity.close();
+  renderApp();
+});
+window.netlifyIdentity.on("logout", function () {
+  renderLogin();
+});
+window.netlifyIdentity.init();
+</script>
+</body>
+</html>

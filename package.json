@@ -1,0 +1,9 @@
+{
+  "name": "verbatim-site",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@netlify/database": "latest",
+    "pg": "^8.11.0"
+  }
+}
