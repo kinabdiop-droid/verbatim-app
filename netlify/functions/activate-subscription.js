@@ -1,14 +1,17 @@
 // Confirms a PayPal subscription is genuinely real and active before marking
 // the logged-in user as a paying subscriber. Never trusts the browser alone.
+// Note: PayPal's Client ID is meant to be public (it's already visible in index.html) --
+// only the Secret below is truly sensitive.
+const PAYPAL_CLIENT_ID = "BAAM2cIUN1zwRZnNDU__Mj9r9Y8pd92xbjHut0J4lTt9BmOI1IQmx3kqpN-XXJ-bjQd4J8DZXsuz3GN4xI";
+
 const PLAN_IDS = {
   monthly: "P-7H78015375966184ANKLGGYY",
   yearly: "P-9RW93862BR088871MNKLGERQ",
 };
 
 async function getAccessToken() {
-  const clientId = process.env.PAYPAL_CLIENT_ID;
   const secret = process.env.PAYPAL_SECRET;
-  const auth = Buffer.from(`${clientId}:${secret}`).toString("base64");
+  const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${secret}`).toString("base64");
   const res = await fetch("https://api-m.paypal.com/v1/oauth2/token", {
     method: "POST",
     headers: {
