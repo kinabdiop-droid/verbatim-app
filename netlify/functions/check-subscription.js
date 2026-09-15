@@ -1,12 +1,10 @@
-// Checks whether the logged-in user already has an active subscription on file.
-const { getConnectionString } = require("@netlify/database");
 const { Client } = require("pg");
 
 exports.handler = async function (event, context) {
   const user = context.clientContext && context.clientContext.user;
   if (!user) return { statusCode: 401, body: JSON.stringify({ error: "Not logged in" }) };
 
-  const client = new Client({ connectionString: getConnectionString() });
+  const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
   await client.connect();
   try {
     await client.query(`
