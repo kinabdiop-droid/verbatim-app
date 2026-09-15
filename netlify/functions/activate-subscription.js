@@ -1,7 +1,3 @@
-// Confirms a PayPal subscription is genuinely real and active before marking
-// the logged-in user as a paying subscriber. Never trusts the browser alone.
-// Note: PayPal's Client ID is meant to be public (it's already visible in index.html) --
-// only the Secret below is truly sensitive.
 const PAYPAL_CLIENT_ID = "BAAM2cIUN1zwRZnNDU__Mj9r9Y8pd92xbjHut0J4lTt9BmOI1IQmx3kqpN-XXJ-bjQd4J8DZXsuz3GN4xI";
 
 const PLAN_IDS = {
@@ -25,7 +21,6 @@ async function getAccessToken() {
   return data.access_token;
 }
 
-const { getConnectionString } = require("@netlify/database");
 const { Client } = require("pg");
 
 exports.handler = async function (event, context) {
@@ -62,7 +57,7 @@ exports.handler = async function (event, context) {
       return { statusCode: 400, body: JSON.stringify({ error: `Subscription status is ${sub.status}, not active` }) };
     }
 
-    const client = new Client({ connectionString: getConnectionString() });
+    const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
     await client.connect();
     try {
       await client.query(`
